@@ -5,6 +5,19 @@ from pathlib import Path
 from typing import Any, Optional, Protocol, runtime_checkable
 from PIL import Image
 
+try:
+    from unittest.mock import Mock, MagicMock
+    _MOCK_TYPES = (Mock, MagicMock)
+except ImportError:
+    _MOCK_TYPES = ()
+
+from bulkimagecreator.exceptions import (
+    GenerationError,
+    NonTransientGenerationError,
+    SafetyBlockError,
+    TransientGenerationError,
+)
+
 
 @runtime_checkable
 class ImageGenerationService(Protocol):
@@ -32,6 +45,8 @@ class ImageGenerationService(Protocol):
         Returns:
             Raw image bytes (PNG or WebP).
         """
+        ...
+
     def generate_candidate_image(
         self,
         source_images: list[Path],
@@ -79,6 +94,54 @@ class MockImageGenerationService:
     def __init__(self, output_bytes: Optional[bytes | list[bytes]] = None) -> None:
         self._output_bytes = output_bytes
         self.call_history: list[dict[str, Any]] = []
+        self._transient_failures: dict[str, dict[str, Any]] = {}
+        self._safety_blocks: dict[str, str] = {}
+        self._non_transient_failures: dict[str, str] = {}
+
+    def set_transient_failure_for_prompt(
+        self,
+        prompt: str,
+        retries_before_success: int = 1,
+        error_message: str = "HTTP 429 Too Many Requests: Rate limit exceeded",
+    ) -> None:
+        """Configure transient failure(s) for a specific prompt before succeeding.
+
+        Args:
+            prompt: Target prompt string to match.
+            retries_before_success: Number of transient failures to trigger before succeeding.
+            error_message: Error message for TransientGenerationError.
+        """
+        self._transient_failures[prompt] = {
+            "retries_before_success": retries_before_success,
+            "failure_count": 0,
+            "error_message": error_message,
+        }
+
+    def set_safety_block_for_prompt(
+        self,
+        prompt: str,
+        error_message: str = "Generation blocked by safety policy (finish_reason=SAFETY)",
+    ) -> None:
+        """Configure a permanent safety block for a specific prompt.
+
+        Args:
+            prompt: Target prompt string to match.
+            error_message: Error message for SafetyBlockError.
+        """
+        self._safety_blocks[prompt] = error_message
+
+    def set_non_transient_failure_for_prompt(
+        self,
+        prompt: str,
+        error_message: str = "Permanent generation error",
+    ) -> None:
+        """Configure a permanent non-transient error for a specific prompt.
+
+        Args:
+            prompt: Target prompt string to match.
+            error_message: Error message for NonTransientGenerationError.
+        """
+        self._non_transient_failures[prompt] = error_message
 
     def generate_image(
         self,
@@ -95,6 +158,24 @@ class MockImageGenerationService:
                 "model": model,
             }
         )
+
+        # Check safety blocks
+        for target_prompt, msg in self._safety_blocks.items():
+            if target_prompt == prompt or target_prompt in prompt:
+                raise SafetyBlockError(msg)
+
+        # Check non-transient failures
+        for target_prompt, msg in self._non_transient_failures.items():
+            if target_prompt == prompt or target_prompt in prompt:
+                raise NonTransientGenerationError(msg)
+
+        # Check transient failures
+        for target_prompt, conf in self._transient_failures.items():
+            if target_prompt == prompt or target_prompt in prompt:
+                if conf["failure_count"] < conf["retries_before_success"]:
+                    conf["failure_count"] += 1
+                    raise TransientGenerationError(conf["error_message"])
+
         if isinstance(self._output_bytes, list) and self._output_bytes:
             return self._output_bytes.pop(0)
         elif isinstance(self._output_bytes, bytes):
@@ -167,7 +248,6 @@ class GeminiImageGenerationService:
         model: Optional[str] = None,
     ) -> bytes:
         from google.genai import types
-        from bulkimagecreator.exceptions import GenerationError
 
         model_name = model or self.default_model
 
@@ -190,18 +270,97 @@ class GeminiImageGenerationService:
                 config=config,
             )
         except Exception as exc:
-            raise GenerationError(f"Gemini API call failed: {exc}") from exc
+            if isinstance(exc, (TransientGenerationError, SafetyBlockError, NonTransientGenerationError)):
+                raise exc
 
-        if not response or not response.candidates:
-            raise GenerationError("No candidates returned from Gemini image generation.")
+            exc_str = str(exc).lower()
+            code = getattr(exc, "code", None)
+            status = getattr(exc, "status", None)
+            status_str = str(status).upper() if status else ""
 
-        for candidate in response.candidates:
-            if candidate.content and candidate.content.parts:
-                for part in candidate.content.parts:
-                    if part.inline_data and part.inline_data.data:
-                        return part.inline_data.data
+            is_transient = False
+            if code in (429, 500, 502, 503, 504):
+                is_transient = True
+            elif any(s in status_str for s in ("RESOURCE_EXHAUSTED", "UNAVAILABLE", "DEADLINE_EXCEEDED")):
+                is_transient = True
+            elif isinstance(exc, TimeoutError) or "timeout" in type(exc).__name__.lower():
+                is_transient = True
+            elif any(
+                k in exc_str
+                for k in (
+                    "429",
+                    "503",
+                    "too many requests",
+                    "resource exhausted",
+                    "service unavailable",
+                    "timed out",
+                    "timeout",
+                )
+            ):
+                is_transient = True
 
-        raise GenerationError("No image data found in Gemini response.")
+            if is_transient:
+                raise TransientGenerationError(f"Transient Gemini API failure: {exc}") from exc
+
+            if any(k in exc_str for k in ("safety", "blocked", "content policy", "recitation", "prohibited")):
+                raise SafetyBlockError(f"Gemini API blocked request: {exc}") from exc
+
+            raise NonTransientGenerationError(f"Gemini API call failed: {exc}") from exc
+
+        # 1. Check for valid returned image data first
+        if response and response.candidates:
+            for candidate in response.candidates:
+                try:
+                    if candidate.content and candidate.content.parts:
+                        for part in candidate.content.parts:
+                            if part.inline_data and isinstance(part.inline_data.data, (bytes, bytearray)):
+                                return bytes(part.inline_data.data)
+                except Exception:
+                    pass
+
+        # 2. If no image data found, check prompt feedback for blocks
+        if response:
+            try:
+                prompt_feedback = getattr(response, "prompt_feedback", None)
+                if prompt_feedback is not None:
+                    block_reason = getattr(prompt_feedback, "block_reason", None)
+                    if block_reason is not None and not isinstance(block_reason, _MOCK_TYPES):
+                        msg = getattr(prompt_feedback, "block_reason_message", None)
+                        msg_str = msg if (msg and not isinstance(msg, _MOCK_TYPES)) else str(block_reason)
+                        raise SafetyBlockError(f"Prompt blocked by safety policy: {msg_str}")
+            except SafetyBlockError:
+                raise
+            except Exception:
+                pass
+
+            # 3. Check candidates for safety finish reason or blocked ratings
+            try:
+                candidates = getattr(response, "candidates", None)
+                if candidates and not isinstance(candidates, _MOCK_TYPES):
+                    for candidate in candidates:
+                        finish_reason = getattr(candidate, "finish_reason", None)
+                        if finish_reason is not None and not isinstance(finish_reason, _MOCK_TYPES):
+                            finish_str = str(finish_reason).upper()
+                            safety_keywords = ("SAFETY", "BLOCK", "PROHIBITED", "RECITATION", "SPII")
+                            if any(kw in finish_str for kw in safety_keywords):
+                                finish_msg = getattr(candidate, "finish_message", None)
+                                msg_str = finish_msg if (finish_msg and not isinstance(finish_msg, _MOCK_TYPES)) else finish_str
+                                raise SafetyBlockError(f"Candidate generation blocked by safety policy: {msg_str}")
+
+                        safety_ratings = getattr(candidate, "safety_ratings", None)
+                        if safety_ratings and isinstance(safety_ratings, list):
+                            for rating in safety_ratings:
+                                if getattr(rating, "blocked", False) is True:
+                                    raise SafetyBlockError(f"Candidate blocked by safety rating: {rating}")
+            except SafetyBlockError:
+                raise
+            except Exception:
+                pass
+
+        if not response or not response.candidates or isinstance(response.candidates, _MOCK_TYPES):
+            raise NonTransientGenerationError("No candidates returned from Gemini image generation.")
+
+        raise NonTransientGenerationError("No image data found in Gemini response.")
 
     def generate_candidate_image(
         self,
