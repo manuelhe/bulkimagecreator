@@ -161,3 +161,158 @@ def test_gemini_service_generate_variation_image(tmp_path: Path) -> None:
     assert len(contents) == 2
     assert contents[1] == "Cyberpunk neon style"
 
+
+def test_mock_service_transient_failure_retries_and_recovers(tmp_path: Path) -> None:
+    from bulkimagecreator.exceptions import TransientGenerationError
+
+    service = MockImageGenerationService()
+    service.set_transient_failure_for_prompt("Retryable prompt", retries_before_success=2)
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (32, 32), color="red").save(ref, format="PNG")
+
+    # Call 1: raises TransientGenerationError
+    import pytest
+
+    with pytest.raises(TransientGenerationError, match="HTTP 429"):
+        service.generate_image(prompt="Retryable prompt", reference_images=[ref])
+
+    # Call 2: raises TransientGenerationError
+    with pytest.raises(TransientGenerationError, match="HTTP 429"):
+        service.generate_image(prompt="Retryable prompt", reference_images=[ref])
+
+    # Call 3: succeeds
+    img_bytes = service.generate_image(prompt="Retryable prompt", reference_images=[ref])
+    assert isinstance(img_bytes, bytes)
+    assert len(img_bytes) > 0
+
+
+def test_mock_service_safety_block(tmp_path: Path) -> None:
+    import pytest
+    from bulkimagecreator.exceptions import SafetyBlockError
+
+    service = MockImageGenerationService()
+    service.set_safety_block_for_prompt("Toxic prompt", error_message="Safety violation")
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (32, 32), color="red").save(ref, format="PNG")
+
+    with pytest.raises(SafetyBlockError, match="Safety violation"):
+        service.generate_image(prompt="Toxic prompt", reference_images=[ref])
+
+
+def test_mock_service_non_transient_failure(tmp_path: Path) -> None:
+    import pytest
+    from bulkimagecreator.exceptions import NonTransientGenerationError
+
+    service = MockImageGenerationService()
+    service.set_non_transient_failure_for_prompt("Bad prompt", error_message="Invalid argument")
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (32, 32), color="red").save(ref, format="PNG")
+
+    with pytest.raises(NonTransientGenerationError, match="Invalid argument"):
+        service.generate_image(prompt="Bad prompt", reference_images=[ref])
+
+
+def test_gemini_service_maps_429_api_error_to_transient(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock
+    import pytest
+    from google.genai.errors import ClientError
+    from bulkimagecreator.exceptions import TransientGenerationError
+    from bulkimagecreator.service import GeminiImageGenerationService
+
+    mock_client = MagicMock()
+    err_json = {"error": {"code": 429, "message": "Resource exhausted", "status": "RESOURCE_EXHAUSTED"}}
+    mock_client.models.generate_content.side_effect = ClientError(429, err_json)
+
+    service = GeminiImageGenerationService(client=mock_client)
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (32, 32), color="red").save(ref, format="PNG")
+
+    with pytest.raises(TransientGenerationError, match="Transient Gemini API failure"):
+        service.generate_image(prompt="Prompt", reference_images=[ref])
+
+
+def test_gemini_service_maps_503_api_error_to_transient(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock
+    import pytest
+    from google.genai.errors import ServerError
+    from bulkimagecreator.exceptions import TransientGenerationError
+    from bulkimagecreator.service import GeminiImageGenerationService
+
+    mock_client = MagicMock()
+    err_json = {"error": {"code": 503, "message": "Service unavailable", "status": "UNAVAILABLE"}}
+    mock_client.models.generate_content.side_effect = ServerError(503, err_json)
+
+    service = GeminiImageGenerationService(client=mock_client)
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (32, 32), color="red").save(ref, format="PNG")
+
+    with pytest.raises(TransientGenerationError, match="Transient Gemini API failure"):
+        service.generate_image(prompt="Prompt", reference_images=[ref])
+
+
+def test_gemini_service_maps_timeout_to_transient(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock
+    import pytest
+    from bulkimagecreator.exceptions import TransientGenerationError
+    from bulkimagecreator.service import GeminiImageGenerationService
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content.side_effect = TimeoutError("Request timed out")
+
+    service = GeminiImageGenerationService(client=mock_client)
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (32, 32), color="red").save(ref, format="PNG")
+
+    with pytest.raises(TransientGenerationError, match="Transient Gemini API failure"):
+        service.generate_image(prompt="Prompt", reference_images=[ref])
+
+
+def test_gemini_service_maps_safety_finish_reason_to_safety_block_error(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock
+    import pytest
+    from bulkimagecreator.exceptions import SafetyBlockError
+    from bulkimagecreator.service import GeminiImageGenerationService
+
+    mock_candidate = MagicMock()
+    mock_candidate.content.parts = []
+    mock_candidate.finish_reason = "SAFETY"
+    mock_candidate.finish_message = "Content violates safety policies"
+    mock_response = MagicMock()
+    mock_response.prompt_feedback = None
+    mock_response.candidates = [mock_candidate]
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+
+    service = GeminiImageGenerationService(client=mock_client)
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (32, 32), color="red").save(ref, format="PNG")
+
+    with pytest.raises(SafetyBlockError, match="Content violates safety policies"):
+        service.generate_image(prompt="Prompt", reference_images=[ref])
+
+
+def test_gemini_service_maps_prompt_feedback_block_to_safety_block_error(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock
+    import pytest
+    from bulkimagecreator.exceptions import SafetyBlockError
+    from bulkimagecreator.service import GeminiImageGenerationService
+
+    mock_feedback = MagicMock()
+    mock_feedback.block_reason = "SAFETY"
+    mock_feedback.block_reason_message = "Prompt contains blocked terms"
+    mock_response = MagicMock()
+    mock_response.prompt_feedback = mock_feedback
+    mock_response.candidates = []
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+
+    service = GeminiImageGenerationService(client=mock_client)
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (32, 32), color="red").save(ref, format="PNG")
+
+    with pytest.raises(SafetyBlockError, match="Prompt contains blocked terms"):
+        service.generate_image(prompt="Prompt", reference_images=[ref])
+
+
