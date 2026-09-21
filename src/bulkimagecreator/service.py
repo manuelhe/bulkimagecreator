@@ -52,6 +52,26 @@ class ImageGenerationService(Protocol):
         """
         ...
 
+    def generate_variation_image(
+        self,
+        seed_image: Path,
+        prompt: str,
+        aspect_ratio: str = "1:1",
+        model: Optional[str] = None,
+    ) -> bytes:
+        """Generate an image variation derived exclusively from the seed image and prompt.
+
+        Args:
+            seed_image: Path to the accepted seed image (00_seed.png).
+            prompt: Variation prompt text.
+            aspect_ratio: Desired aspect ratio ("1:1", "3:4", "4:3", "9:16", "16:9").
+            model: Model name override or None for default.
+
+        Returns:
+            Raw image bytes.
+        """
+        ...
+
 
 class MockImageGenerationService:
     """Mock implementation of ImageGenerationService for testing and dry runs."""
@@ -100,6 +120,20 @@ class MockImageGenerationService:
         return self.generate_image(
             prompt=prompt,
             reference_images=source_images,
+            aspect_ratio=aspect_ratio,
+            model=model,
+        )
+
+    def generate_variation_image(
+        self,
+        seed_image: Path,
+        prompt: str,
+        aspect_ratio: str = "1:1",
+        model: Optional[str] = None,
+    ) -> bytes:
+        return self.generate_image(
+            prompt=prompt,
+            reference_images=[seed_image],
             aspect_ratio=aspect_ratio,
             model=model,
         )
@@ -179,6 +213,20 @@ class GeminiImageGenerationService:
         return self.generate_image(
             prompt=prompt,
             reference_images=source_images,
+            aspect_ratio=aspect_ratio,
+            model=model,
+        )
+
+    def generate_variation_image(
+        self,
+        seed_image: Path,
+        prompt: str,
+        aspect_ratio: str = "1:1",
+        model: Optional[str] = None,
+    ) -> bytes:
+        return self.generate_image(
+            prompt=prompt,
+            reference_images=[seed_image],
             aspect_ratio=aspect_ratio,
             model=model,
         )

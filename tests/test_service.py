@@ -100,3 +100,64 @@ def test_gemini_service_generate_candidate_image(tmp_path: Path) -> None:
     call_kwargs = mock_client.models.generate_content.call_args.kwargs
     assert call_kwargs["model"] == "gemini-2.5-flash-image"
     assert call_kwargs["config"].image_config.aspect_ratio == "4:3"
+
+
+def test_mock_service_generate_variation_image(tmp_path: Path) -> None:
+    service = MockImageGenerationService()
+    seed_img = tmp_path / "00_seed.png"
+    Image.new("RGB", (32, 32), color="purple").save(seed_img, format="PNG")
+
+    var_bytes = service.generate_variation_image(
+        seed_image=seed_img,
+        prompt="A variation in oil paint style",
+        aspect_ratio="1:1",
+    )
+
+    assert isinstance(var_bytes, bytes)
+    img = Image.open(io.BytesIO(var_bytes))
+    assert img.format == "PNG"
+    assert len(service.call_history) == 1
+    assert service.call_history[0]["prompt"] == "A variation in oil paint style"
+    # ADR 0001: Exclusively seed image passed as reference
+    assert service.call_history[0]["reference_images"] == [seed_img]
+    assert service.call_history[0]["aspect_ratio"] == "1:1"
+
+
+def test_gemini_service_generate_variation_image(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock
+    from bulkimagecreator.service import GeminiImageGenerationService
+
+    seed_img = tmp_path / "00_seed.png"
+    Image.new("RGB", (32, 32), color="cyan").save(seed_img, format="PNG")
+
+    dummy_png = io.BytesIO()
+    Image.new("RGB", (64, 64), color="magenta").save(dummy_png, format="PNG")
+    dummy_bytes = dummy_png.getvalue()
+
+    mock_part = MagicMock()
+    mock_part.inline_data.data = dummy_bytes
+    mock_candidate = MagicMock()
+    mock_candidate.content.parts = [mock_part]
+    mock_response = MagicMock()
+    mock_response.candidates = [mock_candidate]
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+
+    service = GeminiImageGenerationService(client=mock_client)
+    result = service.generate_variation_image(
+        seed_image=seed_img,
+        prompt="Cyberpunk neon style",
+        aspect_ratio="9:16",
+    )
+
+    assert result == dummy_bytes
+    mock_client.models.generate_content.assert_called_once()
+    call_kwargs = mock_client.models.generate_content.call_args.kwargs
+    assert call_kwargs["model"] == "gemini-2.5-flash-image"
+    assert call_kwargs["config"].image_config.aspect_ratio == "9:16"
+    # Multimodal contents: only 1 image (seed) + 1 prompt string
+    contents = call_kwargs["contents"]
+    assert len(contents) == 2
+    assert contents[1] == "Cyberpunk neon style"
+

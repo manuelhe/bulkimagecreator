@@ -7,7 +7,7 @@ class BulkImageCreatorError(Exception):
     pass
 
 
-class ValidationError(BulkImageCreatorError):
+class ValidationError(BulkImageCreatorError, ValueError):
     """Raised when user arguments or source image files fail validation."""
 
     pass

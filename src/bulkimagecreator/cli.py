@@ -12,6 +12,7 @@ from bulkimagecreator.exceptions import ValidationError
 from bulkimagecreator.manifest import create_initial_manifest, save_manifest
 from bulkimagecreator.models import AspectRatio, RunConfig
 from bulkimagecreator.seed_phase import run_seed_phase
+from bulkimagecreator.variation_phase import run_variation_phase
 from bulkimagecreator.service import (
     GeminiImageGenerationService,
     ImageGenerationService,
@@ -79,9 +80,16 @@ def run_command(
         "-p",
         help="Seed prompt to generate candidate seed images.",
     ),
+    prompts_file: Optional[Path] = typer.Option(
+        None,
+        "--prompts-file",
+        "-f",
+        help="Path to text file containing variation prompts (one per line).",
+    ),
     prompt_template: str = typer.Option(
         "{prompt}",
         "--prompt-template",
+        "-t",
         help="Template pattern containing {prompt} applied during variation phase.",
     ),
     aspect_ratio: str = typer.Option(
@@ -130,6 +138,20 @@ def run_command(
         )
         raise typer.Exit(code=1)
 
+    # 3. Validate prompt template
+    if "{prompt}" not in prompt_template:
+        console.print(
+            f"[bold red]Error:[/bold red] Invalid prompt template '{prompt_template}'. Must contain '{{prompt}}' placeholder."
+        )
+        raise typer.Exit(code=1)
+
+    # 4. Validate prompts file if supplied
+    if prompts_file is not None and not prompts_file.is_file():
+        console.print(
+            f"[bold red]Error:[/bold red] Prompts file not found: {prompts_file}"
+        )
+        raise typer.Exit(code=1)
+
     # 3. Validate source image files (existence and Pillow readability)
     try:
         validated_sources = validate_source_images(source_images)
@@ -174,6 +196,7 @@ def run_command(
     table.add_row("Model", config.model)
     table.add_row("Aspect Ratio", config.aspect_ratio)
     table.add_row("Prompt Template", config.prompt_template)
+    table.add_row("Prompts File", str(prompts_file) if prompts_file else "None (interactive)")
     table.add_row("Inter-request Delay", f"{config.delay}s")
     table.add_row("Manifest File", str(manifest_path))
 
@@ -206,6 +229,24 @@ def run_command(
 
     if seed_path is None:
         raise typer.Exit(code=0)
+
+    # 8. Execute Variation Phase
+    try:
+        run_variation_phase(
+            run_dir=run_dir,
+            manifest=manifest,
+            service=service,
+            seed_image_path=seed_path,
+            prompts_file=prompts_file,
+            prompt_template=prompt_template,
+            aspect_ratio=aspect_ratio,
+            model=model,
+            delay=delay,
+            console=console,
+        )
+    except Exception as exc:
+        console.print(f"[bold red]Error in variation phase:[/bold red] {exc}")
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
