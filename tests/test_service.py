@@ -33,3 +33,70 @@ def test_mock_service_generates_valid_image(tmp_path: Path) -> None:
     assert len(service.call_history) == 1
     assert service.call_history[0]["prompt"] == "A serene landscape"
     assert service.call_history[0]["reference_images"] == [ref_img]
+
+
+def test_mock_service_generate_candidate_image(tmp_path: Path) -> None:
+    service = MockImageGenerationService()
+    ref1 = tmp_path / "ref1.png"
+    ref2 = tmp_path / "ref2.png"
+    Image.new("RGB", (32, 32), color="blue").save(ref1, format="PNG")
+    Image.new("RGB", (32, 32), color="green").save(ref2, format="PNG")
+
+    candidate_bytes = service.generate_candidate_image(
+        source_images=[ref1, ref2],
+        prompt="A fantasy castle",
+        aspect_ratio="16:9",
+    )
+
+    assert isinstance(candidate_bytes, bytes)
+    img = Image.open(io.BytesIO(candidate_bytes))
+    assert img.format == "PNG"
+    assert len(service.call_history) == 1
+    assert service.call_history[0]["prompt"] == "A fantasy castle"
+    assert service.call_history[0]["reference_images"] == [ref1, ref2]
+    assert service.call_history[0]["aspect_ratio"] == "16:9"
+
+
+def test_gemini_service_protocol_conformance() -> None:
+    from unittest.mock import MagicMock
+    from bulkimagecreator.service import GeminiImageGenerationService
+
+    mock_client = MagicMock()
+    gemini_service = GeminiImageGenerationService(client=mock_client)
+    assert isinstance(gemini_service, ImageGenerationService)
+
+
+def test_gemini_service_generate_candidate_image(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock
+    from bulkimagecreator.service import GeminiImageGenerationService
+
+    ref = tmp_path / "src.png"
+    Image.new("RGB", (32, 32), color="white").save(ref, format="PNG")
+
+    # Mock Gemini response
+    dummy_png = io.BytesIO()
+    Image.new("RGB", (64, 64), color="yellow").save(dummy_png, format="PNG")
+    dummy_bytes = dummy_png.getvalue()
+
+    mock_part = MagicMock()
+    mock_part.inline_data.data = dummy_bytes
+    mock_candidate = MagicMock()
+    mock_candidate.content.parts = [mock_part]
+    mock_response = MagicMock()
+    mock_response.candidates = [mock_candidate]
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+
+    service = GeminiImageGenerationService(client=mock_client)
+    result = service.generate_candidate_image(
+        source_images=[ref],
+        prompt="A sunny day",
+        aspect_ratio="4:3",
+    )
+
+    assert result == dummy_bytes
+    mock_client.models.generate_content.assert_called_once()
+    call_kwargs = mock_client.models.generate_content.call_args.kwargs
+    assert call_kwargs["model"] == "gemini-2.5-flash-image"
+    assert call_kwargs["config"].image_config.aspect_ratio == "4:3"

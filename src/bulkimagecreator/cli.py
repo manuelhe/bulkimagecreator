@@ -11,6 +11,12 @@ import typer
 from bulkimagecreator.exceptions import ValidationError
 from bulkimagecreator.manifest import create_initial_manifest, save_manifest
 from bulkimagecreator.models import AspectRatio, RunConfig
+from bulkimagecreator.seed_phase import run_seed_phase
+from bulkimagecreator.service import (
+    GeminiImageGenerationService,
+    ImageGenerationService,
+    MockImageGenerationService,
+)
 from bulkimagecreator.storage import (
     archive_source_images,
     create_run_directory,
@@ -26,6 +32,26 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+_IMAGE_SERVICE: Optional[ImageGenerationService] = None
+
+
+def get_image_service() -> ImageGenerationService:
+    """Retrieve the configured ImageGenerationService or create default."""
+    global _IMAGE_SERVICE
+    if _IMAGE_SERVICE is not None:
+        return _IMAGE_SERVICE
+    import os
+
+    if os.environ.get("BULKIMAGECREATOR_MOCK_SERVICE") == "1":
+        return MockImageGenerationService()
+    return GeminiImageGenerationService()
+
+
+def set_image_service(service: Optional[ImageGenerationService]) -> None:
+    """Override ImageGenerationService instance for testing."""
+    global _IMAGE_SERVICE
+    _IMAGE_SERVICE = service
 
 
 @app.callback()
@@ -158,6 +184,28 @@ def run_command(
         )
 
     console.print(table)
+
+    # 7. Execute interactive Seed Phase
+    service = get_image_service()
+    archived_paths = [run_dir / s.archived_path for s in archived_sources]
+    try:
+        seed_path = run_seed_phase(
+            run_dir=run_dir,
+            source_images=archived_paths,
+            manifest=manifest,
+            service=service,
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            model=model,
+            no_open=no_open,
+            console=console,
+        )
+    except Exception as exc:
+        console.print(f"[bold red]Error in seed phase:[/bold red] {exc}")
+        raise typer.Exit(code=1)
+
+    if seed_path is None:
+        raise typer.Exit(code=0)
 
 
 if __name__ == "__main__":

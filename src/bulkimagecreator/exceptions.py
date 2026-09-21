@@ -23,3 +23,9 @@ class ManifestError(BulkImageCreatorError):
     """Raised when reading, parsing, or writing the run manifest fails."""
 
     pass
+
+
+class GenerationError(BulkImageCreatorError):
+    """Raised when multimodal image generation fails or returns invalid output."""
+
+    pass
