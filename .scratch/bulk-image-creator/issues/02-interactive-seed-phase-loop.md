@@ -5,13 +5,13 @@ A user runs `bulkimagecreator run <source_images...> --prompt "..."` (or is prom
 
 **Blocked by:** 01: CLI Foundation, Source Image Archiving, and Run Manifest Tracer Bullet (#2)
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Interactively prompts for seed prompt if `--prompt` is not supplied via CLI
-- [ ] Generates candidate images using the multimodal image service seam and saves them as lossless PNGs (`candidate_01.png`, `candidate_02.png`, etc.)
-- [ ] Automatically opens generated candidate image using system viewer (`open` on macOS), disabled when `--no-open` flag is passed
-- [ ] Terminal menu provides choices: accept current candidate, pick any previous candidate by number, edit prompt, retry with same prompt, or quit
-- [ ] Retrying or editing the prompt preserves previously generated candidates without overwriting
-- [ ] Upon candidate acceptance, copies/promotes the selected candidate as `00_seed.png` in the run directory
-- [ ] Updates `run_manifest.json` with seed prompt, all candidate iteration records, and the accepted candidate identifier
-- [ ] Test suite verifies the interactive loop, candidate numbering, prompt modification, and seed promotion using mocked image generation seam
+- [x] Interactively prompts for seed prompt if `--prompt` is not supplied via CLI
+- [x] Generates candidate images using the multimodal image service seam and saves them as lossless PNGs (`candidate_01.png`, `candidate_02.png`, etc.)
+- [x] Automatically opens generated candidate image using system viewer (`open` on macOS), disabled when `--no-open` flag is passed
+- [x] Terminal menu provides choices: accept current candidate, pick any previous candidate by number, edit prompt, retry with same prompt, or quit
+- [x] Retrying or editing the prompt preserves previously generated candidates without overwriting
+- [x] Upon candidate acceptance, copies/promotes the selected candidate as `00_seed.png` in the run directory
+- [x] Updates `run_manifest.json` with seed prompt, all candidate iteration records, and the accepted candidate identifier
+- [x] Test suite verifies the interactive loop, candidate numbering, prompt modification, and seed promotion using mocked image generation seam
