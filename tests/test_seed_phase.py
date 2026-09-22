@@ -419,3 +419,33 @@ class TestSeedPhaseInteractiveLoop:
         assert result.exit_code == 0
         assert "Unknown option" in result.output
         assert "Accepted candidate #1 as seed image: 00_seed.png" in result.output
+
+    def test_generation_failure_in_seed_phase_reprompts_menu_and_allows_prompt_edit(
+        self, tmp_path: Path, sample_image: Path, configure_mock_service: MockImageGenerationService
+    ) -> None:
+        """Assert candidate generation failure (e.g. SafetyBlockError) prompts user to edit prompt or retry instead of crashing."""
+        out_dir = tmp_path / "runs"
+        # Configure mock service to safety-block "Blocked prompt"
+        configure_mock_service.set_safety_block_for_prompt("Blocked prompt")
+
+        # When blocked: user selects 'e', provides "Safe prompt", then accepts candidate with 'a'
+        user_input = "e\nSafe prompt\na\n"
+
+        with patch("bulkimagecreator.seed_phase.launch_viewer"):
+            result = runner.invoke(
+                app,
+                [
+                    "run",
+                    str(sample_image),
+                    "--output-dir",
+                    str(out_dir),
+                    "--prompt",
+                    "Blocked prompt",
+                ],
+                input=user_input,
+            )
+
+        assert result.exit_code == 0
+        assert "Generation failed" in result.output or "blocked" in result.output.lower()
+        assert "Accepted candidate" in result.output
+

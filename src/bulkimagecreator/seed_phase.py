@@ -12,6 +12,7 @@ from PIL import Image
 from rich.console import Console
 from rich.prompt import Prompt
 
+from bulkimagecreator.exceptions import GenerationError, SafetyBlockError
 from bulkimagecreator.manifest import save_manifest
 from bulkimagecreator.models import (
     CandidateImageRecord,
@@ -136,12 +137,99 @@ def run_seed_phase(
         console.print(f"[dim]Prompt: {current_prompt}[/dim]")
 
         # 1. Generate candidate image bytes via service seam
-        image_bytes = service.generate_candidate_image(
-            source_images=source_images,
-            prompt=current_prompt,
-            aspect_ratio=aspect_ratio,
-            model=model,
-        )
+        try:
+            image_bytes = service.generate_candidate_image(
+                source_images=source_images,
+                prompt=current_prompt,
+                aspect_ratio=aspect_ratio,
+                model=model,
+            )
+        except (SafetyBlockError, GenerationError) as exc:
+            console.print(
+                f"[bold red]Generation stopped or refused by Gemini for candidate #{candidate_index}: {exc}[/bold red]"
+            )
+            console.print(
+                "[yellow]The prompt may contain terms restricted by content safety policies or unsupported instructions.[/yellow]"
+            )
+            candidate_index -= 1
+
+            while True:
+                options = []
+                if candidate_records:
+                    options.append("[bold cyan][p][/bold cyan]ick candidate #")
+                options.append("[bold cyan][e][/bold cyan]dit prompt")
+                options.append("[bold cyan][r][/bold cyan]etry")
+                options.append("[bold cyan][q][/bold cyan]uit")
+                menu_prompt = " | ".join(options)
+
+                try:
+                    choice = Prompt.ask(menu_prompt, console=console)
+                except (EOFError, KeyboardInterrupt):
+                    console.print("\n[yellow]Seed phase cancelled. Exiting.[/yellow]")
+                    return None
+
+                if not choice:
+                    continue
+
+                choice_str = choice.strip()
+                action = choice_str[0].lower()
+
+                if action == "e":
+                    try:
+                        new_prompt = Prompt.ask(
+                            "[bold cyan]Enter new prompt[/bold cyan]",
+                            default=current_prompt,
+                            console=console,
+                        )
+                        if new_prompt and new_prompt.strip():
+                            current_prompt = new_prompt.strip()
+                            break
+                    except (EOFError, KeyboardInterrupt):
+                        console.print("\n[yellow]Seed phase cancelled. Exiting.[/yellow]")
+                        return None
+                elif action == "r":
+                    break
+                elif action == "p" and candidate_records:
+                    target_idx: Optional[int] = None
+                    remainder = choice_str[1:].strip()
+                    if remainder.isdigit():
+                        target_idx = int(remainder)
+                    else:
+                        try:
+                            pick_input = Prompt.ask(
+                                f"Enter candidate number (1..{len(candidate_records)})",
+                                console=console,
+                            )
+                            if pick_input and pick_input.strip().isdigit():
+                                target_idx = int(pick_input.strip())
+                        except (EOFError, KeyboardInterrupt):
+                            console.print("\n[yellow]Seed phase cancelled. Exiting.[/yellow]")
+                            return None
+                    if target_idx is not None and 1 <= target_idx <= len(candidate_records):
+                        return _promote_candidate(
+                            accepted_index=target_idx,
+                            candidate_records=candidate_records,
+                            candidates_dir=candidates_dir,
+                            run_dir=run_dir,
+                            manifest=manifest,
+                            console=console,
+                        )
+                    else:
+                        console.print(
+                            f"[red]Invalid candidate number. Must be between 1 and {len(candidate_records)}.[/red]"
+                        )
+                elif action == "q":
+                    console.print("[yellow]Quitting seed phase without selecting a seed image.[/yellow]")
+                    manifest.seed_phase = SeedPhaseRecord(
+                        seed_prompt=current_prompt,
+                        accepted_candidate=None,
+                        candidates=list(candidate_records),
+                    )
+                    save_manifest(manifest, run_dir)
+                    return None
+                else:
+                    console.print(f"[red]Unknown option '{choice_str}'.[/red]")
+            continue
 
         # 2. Save candidate as lossless PNG
         with Image.open(io.BytesIO(image_bytes)) as img:

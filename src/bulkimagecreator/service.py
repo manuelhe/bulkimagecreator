@@ -343,11 +343,20 @@ class GeminiImageGenerationService:
                         finish_reason = getattr(candidate, "finish_reason", None)
                         if finish_reason is not None and not isinstance(finish_reason, _MOCK_TYPES):
                             finish_str = str(finish_reason).upper()
-                            safety_keywords = ("SAFETY", "BLOCK", "PROHIBITED", "RECITATION", "SPII")
+                            safety_keywords = (
+                                "SAFETY",
+                                "BLOCK",
+                                "PROHIBITED",
+                                "RECITATION",
+                                "SPII",
+                                "IMAGE_OTHER",
+                                "NO_IMAGE",
+                                "OTHER",
+                            )
                             if any(kw in finish_str for kw in safety_keywords):
                                 finish_msg = getattr(candidate, "finish_message", None)
                                 msg_str = finish_msg if (finish_msg and not isinstance(finish_msg, _MOCK_TYPES)) else finish_str
-                                raise SafetyBlockError(f"Candidate generation blocked by safety policy: {msg_str}")
+                                raise SafetyBlockError(f"Candidate generation blocked by safety policy or stopped: {msg_str}")
 
                         safety_ratings = getattr(candidate, "safety_ratings", None)
                         if safety_ratings and isinstance(safety_ratings, list):
@@ -362,7 +371,18 @@ class GeminiImageGenerationService:
         if not response or not response.candidates or isinstance(response.candidates, _MOCK_TYPES):
             raise NonTransientGenerationError("No candidates returned from Gemini image generation.")
 
-        raise NonTransientGenerationError("No image data found in Gemini response.")
+        details: list[str] = []
+        try:
+            candidates = getattr(response, "candidates", None)
+            if candidates and not isinstance(candidates, _MOCK_TYPES):
+                for candidate in candidates:
+                    fr = getattr(candidate, "finish_reason", None)
+                    if fr is not None:
+                        details.append(f"finish_reason: {fr}")
+        except Exception:
+            pass
+        detail_msg = f" ({', '.join(details)})" if details else ""
+        raise NonTransientGenerationError(f"No image data found in Gemini response{detail_msg}.")
 
     def generate_candidate_image(
         self,

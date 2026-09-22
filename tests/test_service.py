@@ -386,3 +386,58 @@ def test_gemini_service_maps_prompt_feedback_block_to_safety_block_error(tmp_pat
         service.generate_image(prompt="Prompt", reference_images=[ref])
 
 
+def test_gemini_service_maps_image_other_finish_reason_to_safety_block_error(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock
+    import pytest
+    from google.genai import types
+    from bulkimagecreator.exceptions import SafetyBlockError
+    from bulkimagecreator.service import GeminiImageGenerationService
+
+    mock_candidate = types.Candidate(
+        finish_reason=types.FinishReason.IMAGE_OTHER,
+        content=None,
+        safety_ratings=None,
+    )
+    mock_response = MagicMock()
+    mock_response.prompt_feedback = None
+    mock_response.candidates = [mock_candidate]
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+
+    service = GeminiImageGenerationService(client=mock_client)
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (32, 32), color="red").save(ref, format="PNG")
+
+    with pytest.raises(SafetyBlockError, match="IMAGE_OTHER"):
+        service.generate_image(prompt="Prompt triggering IMAGE_OTHER", reference_images=[ref])
+
+
+def test_gemini_service_maps_no_image_finish_reason_to_safety_block_error(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock
+    import pytest
+    from google.genai import types
+    from bulkimagecreator.exceptions import SafetyBlockError
+    from bulkimagecreator.service import GeminiImageGenerationService
+
+    mock_candidate = types.Candidate(
+        finish_reason=types.FinishReason.NO_IMAGE,
+        content=None,
+        safety_ratings=None,
+    )
+    mock_response = MagicMock()
+    mock_response.prompt_feedback = None
+    mock_response.candidates = [mock_candidate]
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+
+    service = GeminiImageGenerationService(client=mock_client)
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (32, 32), color="red").save(ref, format="PNG")
+
+    with pytest.raises(SafetyBlockError, match="NO_IMAGE"):
+        service.generate_image(prompt="Prompt triggering NO_IMAGE", reference_images=[ref])
+
+
+
