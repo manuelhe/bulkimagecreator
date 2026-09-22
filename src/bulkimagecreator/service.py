@@ -228,6 +228,7 @@ class GeminiImageGenerationService:
         api_key: Optional[str] = None,
         default_model: str = "gemini-2.5-flash-image",
         client: Optional[Any] = None,
+        vertexai: bool = False,
     ) -> None:
         import os
 
@@ -238,7 +239,7 @@ class GeminiImageGenerationService:
             resolved_key = api_key or os.environ.get("GEMINI_API_KEY")
             from google import genai
 
-            self._client = genai.Client(api_key=resolved_key)
+            self._client = genai.Client(api_key=resolved_key, vertexai=vertexai)
 
     def generate_image(
         self,

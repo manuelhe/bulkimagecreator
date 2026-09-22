@@ -214,6 +214,23 @@ def test_gemini_service_disables_automatic_function_calling_and_emits_no_warning
     assert not afc_warnings, f"Unexpected AFC warning emitted: {afc_warnings}"
 
 
+def test_gemini_service_forces_gemini_api_when_vertexai_env_var_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Assert GeminiImageGenerationService defaults to Gemini Developer API even if GOOGLE_GENAI_USE_VERTEXAI is set."""
+    from bulkimagecreator.service import GeminiImageGenerationService
+
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "true")
+
+    service = GeminiImageGenerationService(api_key="test-api-key")
+    client = service._client
+
+    assert client._api_client.vertexai is False
+    assert "generativelanguage.googleapis.com" in client._api_client._http_options.base_url
+
+
+
 
 def test_mock_service_transient_failure_retries_and_recovers(tmp_path: Path) -> None:
     from bulkimagecreator.exceptions import TransientGenerationError
