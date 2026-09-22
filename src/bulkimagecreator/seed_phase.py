@@ -156,10 +156,10 @@ def run_seed_phase(
             while True:
                 options = []
                 if candidate_records:
-                    options.append("[bold cyan][p][/bold cyan]ick candidate #")
-                options.append("[bold cyan][e][/bold cyan]dit prompt")
-                options.append("[bold cyan][r][/bold cyan]etry")
-                options.append("[bold cyan][q][/bold cyan]uit")
+                    options.append(r"[bold cyan]\[p][/bold cyan]ick candidate #")
+                options.append(r"[bold cyan]\[e][/bold cyan]dit prompt")
+                options.append(r"[bold cyan]\[r][/bold cyan]etry")
+                options.append(r"[bold cyan]\[q][/bold cyan]uit")
                 menu_prompt = " | ".join(options)
 
                 try:
@@ -262,11 +262,11 @@ def run_seed_phase(
         # 6. Interactive review menu
         while True:
             menu_prompt = (
-                "[bold cyan][a][/bold cyan]ccept current | "
-                "[bold cyan][p][/bold cyan]ick candidate # | "
-                "[bold cyan][e][/bold cyan]dit prompt | "
-                "[bold cyan][r][/bold cyan]etry | "
-                "[bold cyan][q][/bold cyan]uit"
+                r"[bold cyan]\[a][/bold cyan]ccept current | "
+                r"[bold cyan]\[p][/bold cyan]ick candidate # | "
+                r"[bold cyan]\[e][/bold cyan]dit prompt | "
+                r"[bold cyan]\[r][/bold cyan]etry | "
+                r"[bold cyan]\[q][/bold cyan]uit"
             )
             try:
                 choice = Prompt.ask(menu_prompt, console=console)
