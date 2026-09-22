@@ -130,6 +130,90 @@ def format_variation_prompt(raw_prompt: str, template: str = "{prompt}") -> str:
     return template.replace("{prompt}", raw_prompt.strip())
 
 
+def _generate_and_save_variation(
+    record: VariationRecord,
+    seed_image_path: Path,
+    run_dir: Path,
+    manifest: RunManifest,
+    service: ImageGenerationService,
+    aspect_ratio: str,
+    model: Optional[str],
+    max_retries: int,
+    initial_backoff: float,
+    sleeper: Callable[[float], None],
+    console: Console,
+) -> Optional[Path]:
+    """Execute generation for a single variation record, retry transient errors, save WebP, and update manifest."""
+    var_index = record.index
+    raw_prompt = record.prompt
+    formatted_prompt = record.expanded_prompt
+
+    image_bytes: Optional[bytes] = None
+    skip_reason: Optional[str] = None
+    is_transient = False
+
+    attempt = 0
+    while attempt <= max_retries:
+        try:
+            image_bytes = service.generate_variation_image(
+                seed_image=seed_image_path,
+                prompt=formatted_prompt,
+                aspect_ratio=aspect_ratio,
+                model=model,
+            )
+            break
+        except TransientGenerationError as exc:
+            attempt += 1
+            if attempt <= max_retries:
+                backoff = initial_backoff * (2 ** (attempt - 1))
+                console.print(
+                    f"[yellow]Transient error for prompt #{var_index} ('{raw_prompt}'): {exc}. "
+                    f"Retrying in {backoff:.1f}s (retry {attempt}/{max_retries})...[/yellow]"
+                )
+                sleeper(backoff)
+            else:
+                skip_reason = f"Transient error retries exhausted: {exc}"
+                is_transient = True
+                console.print(
+                    f"[bold red]Transient error retries exhausted for prompt #{var_index}: {exc}. Skipping.[/bold red]"
+                )
+        except (SafetyBlockError, NonTransientGenerationError) as exc:
+            skip_reason = str(exc)
+            is_transient = False
+            console.print(
+                f"[bold yellow]Prompt #{var_index} skipped due to safety/policy block: {exc}[/bold yellow]"
+            )
+            break
+        except Exception as exc:
+            skip_reason = str(exc)
+            is_transient = False
+            console.print(
+                f"[bold red]Prompt #{var_index} failed with unexpected error: {exc}. Skipping.[/bold red]"
+            )
+            break
+
+    if image_bytes is not None:
+        filename = f"{var_index:02d}_variation.webp"
+        variation_path = run_dir / filename
+
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            img.save(variation_path, format="WEBP")
+
+        record.status = VariationExecutionStatus.SUCCESS
+        record.output_filename = filename
+        record.error = None
+        record.is_transient = False
+        save_manifest(manifest, run_dir)
+        return variation_path
+    else:
+        record.status = VariationExecutionStatus.SKIPPED
+        record.output_filename = None
+        record.error = skip_reason or "Unknown error"
+        record.is_transient = is_transient
+        save_manifest(manifest, run_dir)
+        return None
+
+
 def run_variation_phase(
     run_dir: Path,
     manifest: RunManifest,
@@ -203,6 +287,21 @@ def run_variation_phase(
         console.print(
             "[yellow]No variation prompts provided. Variation phase completed.[/yellow]"
         )
+
+        summary_table = Table(
+            title="Variation Phase - Execution Summary",
+            box=box.ROUNDED,
+            header_style="bold cyan",
+        )
+        summary_table.add_column("Metric", style="bold white", width=22)
+        summary_table.add_column("Value", style="green")
+        summary_table.add_row("Run Directory", str(run_dir))
+        summary_table.add_row("Total Prompts", "0")
+        summary_table.add_row("Successful Images", "0")
+        summary_table.add_row("Skipped Prompts", "0")
+        summary_table.add_row("Output Directory", str(run_dir))
+        summary_table.add_row("Status", manifest.status.value)
+        console.print(summary_table)
         return []
 
     saved_paths: list[Path] = []
@@ -249,72 +348,26 @@ def run_variation_phase(
             for i, raw_prompt in enumerate(prompts, start=1):
                 var_index = existing_count + i
                 record = manifest.variations[var_index - 1]
-                formatted_prompt = record.expanded_prompt or format_variation_prompt(raw_prompt, prompt_template)
 
-                image_bytes: Optional[bytes] = None
-                skip_reason: Optional[str] = None
+                variation_path = _generate_and_save_variation(
+                    record=record,
+                    seed_image_path=seed_image_path,
+                    run_dir=run_dir,
+                    manifest=manifest,
+                    service=service,
+                    aspect_ratio=aspect_ratio,
+                    model=model,
+                    max_retries=max_retries,
+                    initial_backoff=initial_backoff,
+                    sleeper=sleeper,
+                    console=console,
+                )
 
-                # Retry loop with exponential backoff for transient errors
-                attempt = 0
-                while attempt <= max_retries:
-                    try:
-                        # Call service passing exclusively seed image (ADR 0001)
-                        image_bytes = service.generate_variation_image(
-                            seed_image=seed_image_path,
-                            prompt=formatted_prompt,
-                            aspect_ratio=aspect_ratio,
-                            model=model,
-                        )
-                        break
-                    except TransientGenerationError as exc:
-                        attempt += 1
-                        if attempt <= max_retries:
-                            backoff = initial_backoff * (2 ** (attempt - 1))
-                            console.print(
-                                f"[yellow]Transient error for prompt #{var_index} ('{raw_prompt}'): {exc}. "
-                                f"Retrying in {backoff:.1f}s (retry {attempt}/{max_retries})...[/yellow]"
-                            )
-                            sleeper(backoff)
-                        else:
-                            skip_reason = f"Transient error retries exhausted: {exc}"
-                            console.print(
-                                f"[bold red]Transient error retries exhausted for prompt #{var_index}: {exc}. Skipping.[/bold red]"
-                            )
-                    except (SafetyBlockError, NonTransientGenerationError) as exc:
-                        skip_reason = str(exc)
-                        console.print(
-                            f"[bold yellow]Prompt #{var_index} skipped due to safety/policy block: {exc}[/bold yellow]"
-                        )
-                        break
-                    except Exception as exc:
-                        skip_reason = str(exc)
-                        console.print(
-                            f"[bold red]Prompt #{var_index} failed with unexpected error: {exc}. Skipping.[/bold red]"
-                        )
-                        break
-
-                if image_bytes is not None:
-                    # Convert to WebP and save sequentially (ADR 0002)
-                    filename = f"{var_index:02d}_variation.webp"
-                    variation_path = run_dir / filename
-
-                    with Image.open(io.BytesIO(image_bytes)) as img:
-                        img.save(variation_path, format="WEBP")
-
+                if variation_path is not None:
                     saved_paths.append(variation_path)
                     success_count += 1
-
-                    # Atomically update manifest after each variation
-                    record.status = VariationExecutionStatus.SUCCESS
-                    record.output_filename = filename
-                    record.error = None
-                    save_manifest(manifest, run_dir)
                 else:
                     skipped_count += 1
-                    record.status = VariationExecutionStatus.SKIPPED
-                    record.output_filename = None
-                    record.error = skip_reason or "Unknown error"
-                    save_manifest(manifest, run_dir)
 
                 progress.update(
                     task_id,
@@ -361,13 +414,9 @@ def is_transient_failure(record: VariationRecord) -> bool:
     """Return True if record was skipped due to a transient failure that can be retried."""
     if record.status != VariationExecutionStatus.SKIPPED:
         return False
-    if record.error and (
-        "Transient error" in record.error
-        or "429" in record.error
-        or "503" in record.error
-        or "timeout" in record.error.lower()
-        or "rate limit" in record.error.lower()
-    ):
+    if getattr(record, "is_transient", False):
+        return True
+    if record.error and "Transient error" in record.error:
         return True
     return False
 
@@ -440,23 +489,25 @@ def resume_variation_phase(
     # 5. If prompts_file provided, reconcile with manifest variations
     if prompts_file is not None:
         file_prompts = load_variation_prompts(prompts_file=prompts_file, console=console)
-        existing_indices = {v.index for v in manifest.variations}
-        for idx, p in enumerate(file_prompts, start=1):
-            if idx not in existing_indices:
+        existing_prompts_count = len(manifest.variations)
+        if len(file_prompts) > existing_prompts_count:
+            extra_prompts = file_prompts[existing_prompts_count:]
+            start_index = max([v.index for v in manifest.variations], default=0) + 1
+            for offset, p in enumerate(extra_prompts):
                 formatted = format_variation_prompt(p, prompt_template)
                 manifest.variations.append(
                     VariationRecord(
-                        index=idx,
+                        index=start_index + offset,
                         prompt=p,
                         expanded_prompt=formatted,
                         status=VariationExecutionStatus.PENDING,
                     )
                 )
-        save_manifest(manifest, run_dir)
+            save_manifest(manifest, run_dir)
 
-    # 6. Identify tasks needing execution:
+    # 6. Identify variation records needing execution:
     # Pending items or items that suffered transient failures
-    tasks: list[VariationRecord] = []
+    records_to_process: list[VariationRecord] = []
     preserved_paths: list[Path] = []
 
     for record in manifest.variations:
@@ -466,16 +517,16 @@ def resume_variation_phase(
                 preserved_paths.append(file_path)
                 continue
         if record.status == VariationExecutionStatus.PENDING or is_transient_failure(record):
-            tasks.append(record)
+            records_to_process.append(record)
 
-    if not tasks:
+    if not records_to_process:
         console.print("[green]All variation prompts in run are already completed. Nothing to resume.[/green]")
         manifest.status = RunStatus.COMPLETED
         save_manifest(manifest, run_dir)
         return preserved_paths
 
     console.print(
-        f"\n[bold cyan]Resuming Variation Phase for run '{manifest.run_id}': {len(tasks)} prompt(s) to process ({len(preserved_paths)} already completed)[/bold cyan]"
+        f"\n[bold cyan]Resuming Variation Phase for run '{manifest.run_id}': {len(records_to_process)} prompt(s) to process ({len(preserved_paths)} already completed)[/bold cyan]"
     )
 
     manifest.status = RunStatus.IN_PROGRESS
@@ -498,76 +549,31 @@ def resume_variation_phase(
         ) as progress:
             task_id = progress.add_task(
                 "Resuming variations",
-                total=len(tasks),
+                total=len(records_to_process),
                 successes=0,
                 skipped=0,
             )
 
-            for i, record in enumerate(tasks, start=1):
-                var_index = record.index
-                raw_prompt = record.prompt
-                formatted_prompt = record.expanded_prompt or format_variation_prompt(raw_prompt, prompt_template)
+            for i, record in enumerate(records_to_process, start=1):
+                variation_path = _generate_and_save_variation(
+                    record=record,
+                    seed_image_path=seed_image_path,
+                    run_dir=run_dir,
+                    manifest=manifest,
+                    service=service,
+                    aspect_ratio=aspect_ratio,
+                    model=actual_model,
+                    max_retries=max_retries,
+                    initial_backoff=initial_backoff,
+                    sleeper=sleeper,
+                    console=console,
+                )
 
-                image_bytes: Optional[bytes] = None
-                skip_reason: Optional[str] = None
-
-                attempt = 0
-                while attempt <= max_retries:
-                    try:
-                        image_bytes = service.generate_variation_image(
-                            seed_image=seed_image_path,
-                            prompt=formatted_prompt,
-                            aspect_ratio=aspect_ratio,
-                            model=actual_model,
-                        )
-                        break
-                    except TransientGenerationError as exc:
-                        attempt += 1
-                        if attempt <= max_retries:
-                            backoff = initial_backoff * (2 ** (attempt - 1))
-                            console.print(
-                                f"[yellow]Transient error for prompt #{var_index} ('{raw_prompt}'): {exc}. "
-                                f"Retrying in {backoff:.1f}s (retry {attempt}/{max_retries})...[/yellow]"
-                            )
-                            sleeper(backoff)
-                        else:
-                            skip_reason = f"Transient error retries exhausted: {exc}"
-                            console.print(
-                                f"[bold red]Transient error retries exhausted for prompt #{var_index}: {exc}. Skipping.[/bold red]"
-                            )
-                    except (SafetyBlockError, NonTransientGenerationError) as exc:
-                        skip_reason = str(exc)
-                        console.print(
-                            f"[bold yellow]Prompt #{var_index} skipped due to safety/policy block: {exc}[/bold yellow]"
-                        )
-                        break
-                    except Exception as exc:
-                        skip_reason = str(exc)
-                        console.print(
-                            f"[bold red]Prompt #{var_index} failed with unexpected error: {exc}. Skipping.[/bold red]"
-                        )
-                        break
-
-                if image_bytes is not None:
-                    filename = f"{var_index:02d}_variation.webp"
-                    variation_path = run_dir / filename
-
-                    with Image.open(io.BytesIO(image_bytes)) as img:
-                        img.save(variation_path, format="WEBP")
-
+                if variation_path is not None:
                     new_saved_paths.append(variation_path)
                     success_count += 1
-
-                    record.status = VariationExecutionStatus.SUCCESS
-                    record.output_filename = filename
-                    record.error = None
-                    save_manifest(manifest, run_dir)
                 else:
                     skipped_count += 1
-                    record.status = VariationExecutionStatus.SKIPPED
-                    record.output_filename = None
-                    record.error = skip_reason or "Unknown error"
-                    save_manifest(manifest, run_dir)
 
                 progress.update(
                     task_id,
@@ -576,7 +582,7 @@ def resume_variation_phase(
                     skipped=skipped_count,
                 )
 
-                if actual_delay > 0 and i < len(tasks):
+                if actual_delay > 0 and i < len(records_to_process):
                     sleeper(actual_delay)
 
         manifest.status = RunStatus.COMPLETED
@@ -598,7 +604,7 @@ def resume_variation_phase(
     summary_table.add_row("Run Directory", str(run_dir))
     summary_table.add_row("Total Variations", str(len(manifest.variations)))
     summary_table.add_row("Previously Completed", str(len(preserved_paths)))
-    summary_table.add_row("Resumed / Executed", str(len(tasks)))
+    summary_table.add_row("Resumed / Executed", str(len(records_to_process)))
     summary_table.add_row("Newly Successful", str(success_count))
     summary_table.add_row("Skipped Prompts", str(skipped_count))
     summary_table.add_row("Status", manifest.status.value)

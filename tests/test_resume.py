@@ -354,3 +354,74 @@ class TestResumeCliIntegration:
         result = runner.invoke(app, ["resume", str(run_dir)])
         assert result.exit_code == 1
         assert "Seed image (00_seed.png) not found in" in result.output
+
+    def test_resume_with_prompts_file_appends_extra_prompts_with_continuous_indices(
+        self, tmp_path: Path, test_seed_image: Path, mock_service: MockImageGenerationService
+    ) -> None:
+        """Assert resume with prompts_file correctly adds new prompts with non-colliding continuous indices."""
+        run_dir = tmp_path / "run_extra_prompts"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "00_seed.png").write_bytes(test_seed_image.read_bytes())
+        (run_dir / "01_variation.webp").write_bytes(b"EXISTING_1")
+
+        manifest = create_initial_manifest(run_id="run_extra_prompts", config=RunConfig(delay=0.0), sources=[])
+        manifest.status = RunStatus.INTERRUPTED
+        manifest.variations = [
+            VariationRecord(
+                index=1,
+                prompt="Prompt 1",
+                expanded_prompt="Prompt 1",
+                status=VariationExecutionStatus.SUCCESS,
+                output_filename="01_variation.webp",
+            )
+        ]
+        save_manifest(manifest, run_dir)
+
+        prompts_file = tmp_path / "extra_prompts.txt"
+        prompts_file.write_text("Prompt 1\nPrompt 2\nPrompt 3\n")
+
+        res = resume_variation_phase(
+            run_dir=run_dir,
+            service=mock_service,
+            prompts_file=prompts_file,
+            delay=0.0,
+        )
+
+        assert len(res) == 3
+        reloaded = load_manifest(run_dir)
+        assert len(reloaded.variations) == 3
+        assert reloaded.variations[0].index == 1
+        assert reloaded.variations[1].index == 2
+        assert reloaded.variations[2].index == 3
+        assert (run_dir / "02_variation.webp").is_file()
+        assert (run_dir / "03_variation.webp").is_file()
+
+    def test_transient_failure_records_is_transient_flag(
+        self, tmp_path: Path, test_seed_image: Path, mock_service: MockImageGenerationService
+    ) -> None:
+        """Assert is_transient flag is True on transient exhaustion and False on safety block."""
+        run_dir = tmp_path / "run_flags"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "00_seed.png").write_bytes(test_seed_image.read_bytes())
+
+        manifest = create_initial_manifest(run_id="run_flags", config=RunConfig(delay=0.0), sources=[])
+        manifest.variations = [
+            VariationRecord(index=1, prompt="Rate limit fail", expanded_prompt="Rate limit fail"),
+            VariationRecord(index=2, prompt="Safety block", expanded_prompt="Safety block"),
+        ]
+        save_manifest(manifest, run_dir)
+
+        mock_service.set_transient_failure_for_prompt("Rate limit fail", retries_before_success=99)
+        mock_service.set_safety_block_for_prompt("Safety block")
+
+        resume_variation_phase(run_dir=run_dir, service=mock_service, delay=0.0)
+
+        reloaded = load_manifest(run_dir)
+        rec1 = reloaded.variations[0]
+        rec2 = reloaded.variations[1]
+
+        assert rec1.status == VariationExecutionStatus.SKIPPED
+        assert rec1.is_transient is True
+
+        assert rec2.status == VariationExecutionStatus.SKIPPED
+        assert rec2.is_transient is False

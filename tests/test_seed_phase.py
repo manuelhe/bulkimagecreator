@@ -364,6 +364,7 @@ class TestSeedPhaseInteractiveLoop:
         assert candidate.is_file()
 
         manifest = load_manifest(run_dir)
+        assert manifest.status == RunStatus.INTERRUPTED
         assert manifest.seed_phase.accepted_candidate is None
         assert len(manifest.seed_phase.candidates) == 1
 

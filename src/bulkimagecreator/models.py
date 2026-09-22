@@ -77,6 +77,7 @@ class VariationRecord(BaseModel):
     status: VariationExecutionStatus = VariationExecutionStatus.PENDING
     output_filename: Optional[str] = None
     error: Optional[str] = None
+    is_transient: bool = False
 
 
 class RunManifest(BaseModel):

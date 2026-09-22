@@ -16,6 +16,7 @@ from bulkimagecreator.manifest import save_manifest
 from bulkimagecreator.models import (
     CandidateImageRecord,
     RunManifest,
+    RunStatus,
     SeedPhaseRecord,
 )
 from bulkimagecreator.service import ImageGenerationService
@@ -35,6 +36,33 @@ def launch_viewer(candidate_path: Path, no_open: bool = False) -> None:
             subprocess.run(["open", str(candidate_path)], check=False)
         except Exception:
             pass
+
+
+def _promote_candidate(
+    accepted_index: int,
+    candidate_records: list[CandidateImageRecord],
+    candidates_dir: Path,
+    run_dir: Path,
+    manifest: RunManifest,
+    console: Console,
+) -> Path:
+    """Promote an accepted candidate image to 00_seed.png and persist in manifest."""
+    accepted_record = candidate_records[accepted_index - 1]
+    selected_candidate_path = candidates_dir / accepted_record.filename
+    seed_path = run_dir / "00_seed.png"
+    shutil.copy2(selected_candidate_path, seed_path)
+
+    manifest.seed_phase = SeedPhaseRecord(
+        seed_prompt=accepted_record.seed_prompt,
+        accepted_candidate=accepted_index,
+        candidates=list(candidate_records),
+    )
+    save_manifest(manifest, run_dir)
+
+    console.print(
+        f"[bold green]Accepted candidate #{accepted_index} as seed image: 00_seed.png[/bold green]"
+    )
+    return seed_path
 
 
 def run_seed_phase(
@@ -166,23 +194,14 @@ def run_seed_phase(
 
             if action == "a":
                 # Accept current candidate
-                accepted_index = candidate_index
-                accepted_record = candidate_records[accepted_index - 1]
-                selected_candidate_path = candidates_dir / accepted_record.filename
-                seed_path = run_dir / "00_seed.png"
-                shutil.copy2(selected_candidate_path, seed_path)
-
-                manifest.seed_phase = SeedPhaseRecord(
-                    seed_prompt=accepted_record.seed_prompt,
-                    accepted_candidate=accepted_index,
-                    candidates=list(candidate_records),
+                return _promote_candidate(
+                    accepted_index=candidate_index,
+                    candidate_records=candidate_records,
+                    candidates_dir=candidates_dir,
+                    run_dir=run_dir,
+                    manifest=manifest,
+                    console=console,
                 )
-                save_manifest(manifest, run_dir)
-
-                console.print(
-                    f"[bold green]Accepted candidate #{accepted_index} as seed image: 00_seed.png[/bold green]"
-                )
-                return seed_path
 
             elif action == "p":
                 # Pick candidate #
@@ -200,6 +219,8 @@ def run_seed_phase(
                             target_idx = int(pick_input.strip())
                     except (EOFError, KeyboardInterrupt):
                         console.print("\n[yellow]Seed phase cancelled. Exiting.[/yellow]")
+                        manifest.status = RunStatus.INTERRUPTED
+                        save_manifest(manifest, run_dir)
                         return None
 
                 if target_idx is None or target_idx < 1 or target_idx > candidate_index:
@@ -208,23 +229,14 @@ def run_seed_phase(
                     )
                     continue
 
-                accepted_index = target_idx
-                accepted_record = candidate_records[accepted_index - 1]
-                selected_candidate_path = candidates_dir / accepted_record.filename
-                seed_path = run_dir / "00_seed.png"
-                shutil.copy2(selected_candidate_path, seed_path)
-
-                manifest.seed_phase = SeedPhaseRecord(
-                    seed_prompt=accepted_record.seed_prompt,
-                    accepted_candidate=accepted_index,
-                    candidates=list(candidate_records),
+                return _promote_candidate(
+                    accepted_index=target_idx,
+                    candidate_records=candidate_records,
+                    candidates_dir=candidates_dir,
+                    run_dir=run_dir,
+                    manifest=manifest,
+                    console=console,
                 )
-                save_manifest(manifest, run_dir)
-
-                console.print(
-                    f"[bold green]Accepted candidate #{accepted_index} as seed image: 00_seed.png[/bold green]"
-                )
-                return seed_path
 
             elif action == "e":
                 # Edit prompt
@@ -236,6 +248,8 @@ def run_seed_phase(
                     )
                 except (EOFError, KeyboardInterrupt):
                     console.print("\n[yellow]Seed phase cancelled. Exiting.[/yellow]")
+                    manifest.status = RunStatus.INTERRUPTED
+                    save_manifest(manifest, run_dir)
                     return None
 
                 if new_prompt and new_prompt.strip():
@@ -249,6 +263,7 @@ def run_seed_phase(
             elif action == "q":
                 # Quit cleanly
                 console.print("[yellow]Seed phase cancelled. Exiting.[/yellow]")
+                manifest.status = RunStatus.INTERRUPTED
                 manifest.seed_phase = SeedPhaseRecord(
                     seed_prompt=None,
                     accepted_candidate=None,
