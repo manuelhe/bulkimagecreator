@@ -12,7 +12,7 @@ from bulkimagecreator.exceptions import ValidationError
 from bulkimagecreator.manifest import create_initial_manifest, save_manifest
 from bulkimagecreator.models import AspectRatio, RunConfig
 from bulkimagecreator.seed_phase import run_seed_phase
-from bulkimagecreator.variation_phase import run_variation_phase
+from bulkimagecreator.variation_phase import resume_variation_phase, run_variation_phase
 from bulkimagecreator.service import (
     GeminiImageGenerationService,
     ImageGenerationService,
@@ -246,6 +246,65 @@ def run_command(
         )
     except Exception as exc:
         console.print(f"[bold red]Error in variation phase:[/bold red] {exc}")
+        raise typer.Exit(code=1)
+
+
+@app.command(name="resume")
+def resume_command(
+    run_dir: Path = typer.Argument(
+        ...,
+        help="Path to existing run directory to resume.",
+        show_default=False,
+    ),
+    prompts_file: Optional[Path] = typer.Option(
+        None,
+        "--prompts-file",
+        "-f",
+        help="Path to text file containing variation prompts if resuming from an external list.",
+    ),
+    delay: Optional[float] = typer.Option(
+        None,
+        "--delay",
+        "-d",
+        help="Inter-request pacing delay in seconds (defaults to run config if not specified).",
+    ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help="Multimodal image generation model name override.",
+    ),
+) -> None:
+    """Resume an interrupted or partially completed run."""
+    run_dir = Path(run_dir)
+    if not run_dir.exists() or not run_dir.is_dir():
+        console.print(f"[bold red]Error:[/bold red] Run directory not found: {run_dir}")
+        raise typer.Exit(code=1)
+
+    if not (run_dir / "run_manifest.json").is_file():
+        console.print(f"[bold red]Error:[/bold red] Run manifest not found in: {run_dir}")
+        raise typer.Exit(code=1)
+
+    if not (run_dir / "00_seed.png").is_file():
+        console.print(f"[bold red]Error:[/bold red] Seed image (00_seed.png) not found in: {run_dir}")
+        raise typer.Exit(code=1)
+
+    if prompts_file is not None and not prompts_file.is_file():
+        console.print(f"[bold red]Error:[/bold red] Prompts file not found: {prompts_file}")
+        raise typer.Exit(code=1)
+
+    service = get_image_service()
+    try:
+        resume_variation_phase(
+            run_dir=run_dir,
+            service=service,
+            prompts_file=prompts_file,
+            delay=delay,
+            model=model,
+            console=console,
+        )
+    except Exception as exc:
+        console.print(f"[bold red]Error resuming run:[/bold red] {exc}")
         raise typer.Exit(code=1)
 
 
