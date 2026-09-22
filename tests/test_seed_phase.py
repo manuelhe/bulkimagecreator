@@ -446,6 +446,67 @@ class TestSeedPhaseInteractiveLoop:
             )
 
         assert result.exit_code == 0
-        assert "Generation failed" in result.output or "blocked" in result.output.lower()
+        assert "Generation stopped or refused by Gemini" in result.output
+        assert "[e]dit prompt | [r]etry | [q]uit" in result.output
         assert "Accepted candidate" in result.output
+
+    def test_seed_phase_menu_options_presentation(
+        self, tmp_path: Path, sample_image: Path
+    ) -> None:
+        """Assert menu options preserve first letters and brackets without reverse styling."""
+        out_dir = tmp_path / "runs"
+        with patch("bulkimagecreator.seed_phase.launch_viewer"):
+            result = runner.invoke(
+                app,
+                [
+                    "run",
+                    str(sample_image),
+                    "--output-dir",
+                    str(out_dir),
+                    "--prompt",
+                    "A vibrant sunset",
+                ],
+                input="a\n",
+            )
+
+        assert result.exit_code == 0
+        expected_menu = (
+            "[a]ccept current | [p]ick candidate # | [e]dit prompt | [r]etry | [q]uit"
+        )
+        assert expected_menu in result.output
+        assert "ccept current" not in result.output.replace(expected_menu, "")
+
+    def test_seed_phase_safety_block_menu_with_existing_candidates(
+        self, tmp_path: Path, sample_image: Path, configure_mock_service: MockImageGenerationService
+    ) -> None:
+        """Assert safety block menu includes formatted [p]ick candidate # option when previous candidates exist."""
+        out_dir = tmp_path / "runs"
+        # Generate candidate 1, then edit prompt to blocked prompt, then pick candidate 1
+        configure_mock_service.set_safety_block_for_prompt("Blocked prompt 2")
+        # Step 1: retry with edit -> 'e', 'Blocked prompt 2'
+        # Step 2: blocked menu shows '[p]ick candidate # | [e]dit prompt | [r]etry | [q]uit' -> user picks 'p 1'
+        user_input = "e\nBlocked prompt 2\np 1\n"
+
+        with patch("bulkimagecreator.seed_phase.launch_viewer"):
+            result = runner.invoke(
+                app,
+                [
+                    "run",
+                    str(sample_image),
+                    "--output-dir",
+                    str(out_dir),
+                    "--prompt",
+                    "Initial safe prompt",
+                ],
+                input=user_input,
+            )
+
+        assert result.exit_code == 0
+        expected_blocked_menu = (
+            "[p]ick candidate # | [e]dit prompt | [r]etry | [q]uit"
+        )
+        assert expected_blocked_menu in result.output
+        assert "ick candidate #" not in result.output.replace(expected_blocked_menu, "")
+
+
 
