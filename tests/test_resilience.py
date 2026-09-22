@@ -26,7 +26,7 @@ def run_fixture(tmp_path: Path):
 
     manifest = create_initial_manifest(
         run_id="test-run",
-        config=RunConfig(aspect_ratio="1:1", model="gemini-2.5-flash-image"),
+        config=RunConfig(aspect_ratio="1:1", model="gemini-3.1-flash-lite-image"),
         sources=[],
     )
 

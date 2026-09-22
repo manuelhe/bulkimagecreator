@@ -226,7 +226,7 @@ class GeminiImageGenerationService:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        default_model: str = "gemini-2.5-flash-image",
+        default_model: str = "gemini-3.1-flash-lite-image",
         client: Optional[Any] = None,
         vertexai: bool = False,
     ) -> None:

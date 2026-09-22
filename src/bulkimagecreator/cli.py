@@ -99,7 +99,7 @@ def run_command(
         help="Target aspect ratio (1:1, 3:4, 4:3, 9:16, 16:9).",
     ),
     model: str = typer.Option(
-        "gemini-2.5-flash-image",
+        "gemini-3.1-flash-lite-image",
         "--model",
         "-m",
         help="Multimodal image generation model name.",

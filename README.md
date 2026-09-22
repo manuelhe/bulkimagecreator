@@ -1,6 +1,6 @@
 # Bulk Image Creator (`bulkimagecreator`)
 
-> A robust, resilient command-line tool that blends 1 to 4 reference images into a curated **Seed Image** via an interactive review loop, then traverses a list of variation prompts to generate batches of stylized **Variation Images** using Google GenAI's Nano Banana image generation model (`gemini-2.5-flash-image`).
+> A robust, resilient command-line tool that blends 1 to 4 reference images into a curated **Seed Image** via an interactive review loop, then traverses a list of variation prompts to generate batches of stylized **Variation Images** using Google GenAI's image generation model (`gemini-3.1-flash-lite-image`).
 
 ---
 
@@ -174,7 +174,7 @@ bulkimagecreator run [OPTIONS] SOURCE_IMAGES...
 | `--aspect-ratio` | `-a` | `CHOICE` | `1:1` | Target aspect ratio (`1:1`, `3:4`, `4:3`, `9:16`, `16:9`). |
 | `--delay` | `-d` | `FLOAT` | `1.5` | Pacing delay in seconds between consecutive variation requests. |
 | `--output-dir` | `-o` | `PATH` | `./runs` | Base directory where timestamped run folders are created. |
-| `--model` | `-m` | `TEXT` | `gemini-2.5-flash-image` | Target Gemini image generation model identifier. |
+| `--model` | `-m` | `TEXT` | `gemini-3.1-flash-lite-image` | Target Gemini image generation model identifier. |
 | `--no-open` | | `FLAG` | `False` | Disables automatically opening candidate images in the OS image viewer. |
 
 ---
@@ -231,7 +231,7 @@ runs/run_20260921_183000/
   "created_at": "2026-09-21T18:30:00Z",
   "updated_at": "2026-09-21T18:35:12Z",
   "config": {
-    "model": "gemini-2.5-flash-image",
+    "model": "gemini-3.1-flash-lite-image",
     "aspect_ratio": "16:9",
     "prompt_template": "cinematic concept art of {prompt}, dramatic lighting, 8k",
     "prompts_file": "examples/prompts.txt",

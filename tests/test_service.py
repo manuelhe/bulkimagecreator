@@ -98,7 +98,7 @@ def test_gemini_service_generate_candidate_image(tmp_path: Path) -> None:
     assert result == dummy_bytes
     mock_client.models.generate_content.assert_called_once()
     call_kwargs = mock_client.models.generate_content.call_args.kwargs
-    assert call_kwargs["model"] == "gemini-2.5-flash-image"
+    assert call_kwargs["model"] == "gemini-3.1-flash-lite-image"
     assert call_kwargs["config"].image_config.aspect_ratio == "4:3"
 
 
@@ -154,7 +154,7 @@ def test_gemini_service_generate_variation_image(tmp_path: Path) -> None:
     assert result == dummy_bytes
     mock_client.models.generate_content.assert_called_once()
     call_kwargs = mock_client.models.generate_content.call_args.kwargs
-    assert call_kwargs["model"] == "gemini-2.5-flash-image"
+    assert call_kwargs["model"] == "gemini-3.1-flash-lite-image"
     assert call_kwargs["config"].image_config.aspect_ratio == "9:16"
     # Multimodal contents: only 1 image (seed) + 1 prompt string
     contents = call_kwargs["contents"]

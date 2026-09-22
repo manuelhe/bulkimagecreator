@@ -90,4 +90,4 @@ A resilient, command-line application that automates the transition from multi-i
 ## Further Notes
 
 - API keys are passed via `GEMINI_API_KEY` in environment or `.env` files.
-- Default image generation model is set to `gemini-2.5-flash-image` (Google's Nano Banana multimodal generation model), overridable via `--model`.
+- Default image generation model is set to `gemini-3.1-flash-lite-image`, overridable via `--model`.

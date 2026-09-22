@@ -30,7 +30,7 @@ class AspectRatio(str, Enum):
 class RunConfig(BaseModel):
     """Configuration parameters for a Run."""
 
-    model: str = "gemini-2.5-flash-image"
+    model: str = "gemini-3.1-flash-lite-image"
     aspect_ratio: str = "1:1"
     prompt_template: str = "{prompt}"
     delay: float = 1.5

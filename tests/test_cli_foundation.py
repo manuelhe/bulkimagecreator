@@ -184,5 +184,6 @@ class TestRunCreationAndArchiving:
         assert archived_files[1].read_bytes() == img_b.read_bytes()
 
         manifest = load_manifest(run_dir)
+        assert manifest.config.model == "gemini-3.1-flash-lite-image"
         assert manifest.sources[0].archived_path == "sources/01_ref.png"
         assert manifest.sources[1].archived_path == "sources/02_ref.png"
