@@ -261,6 +261,7 @@ class GeminiImageGenerationService:
         config = types.GenerateContentConfig(
             response_modalities=["IMAGE"],
             image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
         try:

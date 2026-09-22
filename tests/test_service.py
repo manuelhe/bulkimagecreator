@@ -162,6 +162,59 @@ def test_gemini_service_generate_variation_image(tmp_path: Path) -> None:
     assert contents[1] == "Cyberpunk neon style"
 
 
+def test_gemini_service_disables_automatic_function_calling_and_emits_no_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Assert GeminiImageGenerationService disables AFC so google-genai emits no deprecation warning."""
+    import logging
+    from google import genai
+    from google.genai.models import Models
+    from unittest.mock import MagicMock, patch
+    from bulkimagecreator.service import GeminiImageGenerationService
+
+    # Reset SDK warning latch to ensure warning would trigger if not properly disabled
+    Models._logged_afc_warning = False
+
+    test_img = tmp_path / "input.png"
+    Image.new("RGB", (16, 16), color="red").save(test_img, format="PNG")
+
+    dummy_png = io.BytesIO()
+    Image.new("RGB", (32, 32), color="green").save(dummy_png, format="PNG")
+    dummy_bytes = dummy_png.getvalue()
+
+    mock_part = MagicMock()
+    mock_part.inline_data.data = dummy_bytes
+    mock_part.inline_data.mime_type = "image/png"
+    mock_candidate = MagicMock()
+    mock_candidate.content.parts = [mock_part]
+    mock_response = MagicMock()
+    mock_response.candidates = [mock_candidate]
+    mock_response.prompt_feedback = None
+
+    # Use a real genai.Client so models.generate_content validation & warning logic executes
+    client = genai.Client(api_key="test-api-key")
+
+    with patch.object(client.models, "_generate_content", return_value=mock_response):
+        with caplog.at_level(logging.WARNING, logger="google_genai.models"):
+            service = GeminiImageGenerationService(client=client)
+            result = service.generate_image(
+                prompt="Futuristic city",
+                reference_images=[test_img],
+                aspect_ratio="1:1",
+            )
+
+    assert result == dummy_bytes
+
+    # Assert that no AFC warning was logged
+    afc_warnings = [
+        rec.message
+        for rec in caplog.records
+        if "Direct use of automatic function calling" in rec.message
+    ]
+    assert not afc_warnings, f"Unexpected AFC warning emitted: {afc_warnings}"
+
+
+
 def test_mock_service_transient_failure_retries_and_recovers(tmp_path: Path) -> None:
     from bulkimagecreator.exceptions import TransientGenerationError
 
