@@ -1,0 +1,20 @@
+# Bulk Image Creator - Example Variation Prompts
+# Lines starting with '#' and blank lines are automatically ignored by the CLI.
+
+# Lighting and environmental moods
+neon noir cyberpunk lighting with rain-slicked asphalt reflections
+golden hour sunset with long dramatic shadows and warm amber backlight
+misty atmospheric morning fog with soft diffused ethereal sunlight
+midnight under a full moon with starry sky and cool bioluminescent highlights
+
+# Stylistic and artistic variations
+watercolor illustration with vibrant color bleeds on textured paper
+vintage 1970s analog film photography with soft grain and warm Kodachrome hues
+monochrome high-contrast charcoal sketch with expressive textured linework
+steampunk aesthetic with brass gears, copper pipes, and vintage Victorian filigree
+
+# Dynamic action and weather settings
+blizzard snowstorm with swirling wind, frosted edges, and cold blues
+overgrown ancient temple ruins with cascading ivy and creeping moss
+floating islands in the clouds during a vibrant pastel sunrise
+autumn forest with falling golden leaves, crisp air, and earthy tones
